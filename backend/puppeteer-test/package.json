@@ -1,8 +1,0 @@
-{
-  "scripts": {
-    "test": "node --test scrape-runs.test.mjs"
-  },
-  "dependencies": {
-    "puppeteer": "^25.12.0"
-  }
-}

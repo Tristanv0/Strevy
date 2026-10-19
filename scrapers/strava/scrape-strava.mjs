@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { scrapeLatestRuns } from './scrape-runs.mjs';
+import { enrichRuns } from './enrich-runs.mjs';
+import { findVisibleLoginControl, clickLoginControl } from './login-controls.mjs';
 
 // Resolve paths relative to this script, regardless of the working directory.
 const envPath = fileURLToPath(new URL('../../.env', import.meta.url));
@@ -37,21 +39,13 @@ const browser = await puppeteer.launch({
 class LoginRejectedError extends Error {}
 
 // Strava renders separate desktop/mobile forms; use the visible control.
-async function visibleElement(page, selector, text) {
+async function visibleElement(page, selector, text, acceptPasswordInput = false) {
   const handle = await page.waitForFunction(
-    (selector, text) => {
-      if (/An unexpected error occurred/i.test(document.body?.innerText || '')) {
-        return { loginRejected: true };
-      }
-      return Array.from(document.querySelectorAll(selector)).find(
-        (element) => element.getClientRects().length > 0
-          && getComputedStyle(element).visibility !== 'hidden'
-          && (text === undefined || element.textContent.trim() === text),
-      );
-    },
+    findVisibleLoginControl,
     { timeout: 0 },
     selector,
     text,
+    acceptPasswordInput,
   );
   const element = handle.asElement();
   if (!element) {
@@ -98,7 +92,7 @@ async function clickAndPause(page, element) {
   }
   Object.assign(pointer, target);
   await pause(40, 100);
-  await page.mouse.click(target.x, target.y, { delay: randomBetween(40, 80) });
+  await clickLoginControl(element, randomBetween(40, 80));
   await pause();
 }
 
@@ -195,14 +189,20 @@ try {
       stage = 'submitting the email';
       await clickAndPause(page, await visibleElement(page, submitSelector));
       stage = 'opening password login';
-      const usePasswordButton = await visibleElement(
-        page, 'button, a, [role="button"]', 'Use password instead',
+      const passwordStep = await visibleElement(
+        page, 'button, a, [role="button"]', 'Use password instead', true,
       );
-      await clickAndPause(page, usePasswordButton);
+      const passwordAlreadyOpen = await passwordStep.evaluate(element => element.matches('input[type="password"]'));
+      if (!passwordAlreadyOpen) {
+        console.log('Clicking Use password instead.');
+        await clickAndPause(page, passwordStep);
+      }
+      await passwordStep.dispose();
     }
 
     stage = 'entering the password';
     const passwordInput = await visibleElement(page, 'input[type="password"]');
+    console.log('Password field is ready.');
     await typeAndPause(page, passwordInput, password);
     stage = 'submitting the password';
     await clickAndPause(page, await visibleElement(page, submitSelector));
@@ -225,11 +225,15 @@ try {
 
   stage = 'scraping your latest five runs';
   console.log('Reading your own activity history.');
-  const runs = await scrapeLatestRuns(page, {
+  const summaries = await scrapeLatestRuns(page, {
     limit: 5, clickAndPause, pause: () => pause(1_000, 1_800),
   });
-  stage = 'saving the run data';
   const outputDirectory = new URL('./output/', import.meta.url);
+  stage = 'collecting run metrics, uploaded photos, and route images';
+  const runs = await enrichRuns(page, summaries, {
+    athleteId, outputDirectory, pause: () => pause(1_000, 1_800),
+  });
+  stage = 'saving the run data';
   const outputPath = new URL('latest-runs.json', outputDirectory);
   const temporaryPath = new URL('latest-runs.json.tmp', outputDirectory);
   await mkdir(outputDirectory, { recursive: true });
@@ -247,7 +251,13 @@ try {
     Sport: run.sportType,
     Distance: `${run.distance.value} ${run.distance.unit}`,
     'Moving time': run.movingTime.display,
-    Pace: run.averagePace?.display || 'Unavailable',
+    'Pace /km': run.averagePacePerKm?.display || 'Unavailable',
+    'Avg HR': run.averageHeartRateBpm ?? 'Unavailable',
+    Effort: run.relativeEffort ?? 'Unavailable',
+    'Elevation (m)': run.elevationGainMeters ?? 'Unavailable',
+    Photos: run.photos.length,
+    Route: run.routeImage ? 'Saved' : 'Unavailable',
+    Map: run.mapImage ? 'Saved' : 'Unavailable',
   })));
   console.log(`Saved ${runs.length} runs to ${fileURLToPath(outputPath)}`);
   if (runs.length < 5) console.log('Your activity history contains fewer than five running activities.');

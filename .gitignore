@@ -1,4 +1,4 @@
 node_modules
 .env
 browser-profile/
-
+scrapers/strava/output/
