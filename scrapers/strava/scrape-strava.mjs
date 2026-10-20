@@ -28,8 +28,7 @@ for (const key of ['STRAVA_EMAIL', 'STRAVA_PASSWORD', 'STRAVA_ATHLETE_ID']) {
 
 // Puppeteer creates a temporary profile and removes it when the browser closes.
 const browser = await puppeteer.launch({
-  channel: 'chrome',
-  headless: false,
+  headless: process.env.STRAVA_HEADLESS === 'true',
   timeout: 0,
   ignoreDefaultArgs: ['--enable-automation'],
   args: ['--disable-blink-features=AutomationControlled'],

@@ -1,0 +1,97 @@
+name: Test Strava scrape
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-strava-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # Use the runner's installed Chrome and its configured Linux sandbox.
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: Locate Chrome and virtual display
+        run: |
+          chrome_path="$(command -v google-chrome)"
+          "$chrome_path" --version
+          command -v xvfb-run
+          echo "PUPPETEER_EXECUTABLE_PATH=$chrome_path" >> "$GITHUB_ENV"
+
+      - name: Scrape with a virtual display
+        timeout-minutes: 10
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run scrape:strava
+        env:
+          STRAVA_HEADLESS: 'false'
+          STRAVA_EMAIL: ${{ secrets.STRAVA_EMAIL }}
+          STRAVA_PASSWORD: ${{ secrets.STRAVA_PASSWORD }}
+          STRAVA_ATHLETE_ID: ${{ secrets.STRAVA_ATHLETE_ID }}
+
+      - name: Verify route and map exports
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile } from 'node:fs/promises';
+          const output = new URL('./scrapers/strava/output/', `file://${process.cwd()}/`);
+          const { runs } = JSON.parse(await readFile(new URL('latest-runs.json', output), 'utf8'));
+          if (!Array.isArray(runs) || runs.length === 0) throw new Error('No runs were exported.');
+          const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+          const rows = [];
+          let failed = false;
+          for (const run of runs) {
+            const row = { Run: run.id };
+            for (const [label, field, filename] of [
+              ['Route', 'routeImage', 'route.png'], ['Map', 'mapImage', 'map.png'],
+            ]) {
+              let valid = false;
+              if (/^\d+$/.test(run.id) && run[field]?.path === `media/${run.id}/${filename}`) {
+                try {
+                  const png = await readFile(new URL(run[field].path, output));
+                  valid = png.length >= 24 && png.subarray(0, 8).equals(signature)
+                    && png.readUInt32BE(16) > 0 && png.readUInt32BE(20) > 0;
+                } catch { /* Report the missing file with the rest of this run's media. */ }
+              }
+              row[label] = valid ? 'Saved' : 'Missing or invalid';
+              if (!valid) failed = true;
+            }
+            rows.push(row);
+            for (const warning of run.mediaWarnings ?? []) console.log(`Run ${run.id}: ${warning}`);
+          }
+          console.table(rows);
+          await appendFile(process.env.GITHUB_STEP_SUMMARY, [
+            '## Strava media exports', '', '| Run | Route | Map |', '| --- | --- | --- |',
+            ...rows.map(row => `| ${row.Run} | ${row.Route} | ${row.Map} |`), '',
+          ].join('\n'));
+          if (failed) throw new Error('Some route or map images are missing. Inspect the logs and output artifact.');
+          NODE
+
+      - name: Save scrape output for inspection
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: strava-scrape-output
+          path: |
+            scrapers/strava/output/latest-runs.json
+            scrapers/strava/output/media/**/*.png
+          if-no-files-found: warn
+          retention-days: 3

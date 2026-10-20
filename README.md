@@ -51,8 +51,9 @@ npm run deploy                # Publish the Worker and custom domain
 ```
 
 The private `strevy-data` bucket stores JSON and images. The Worker uses its R2
-binding without needing Strava credentials. The scraper remains a separate local
-job. Both local and remote uploads publish the JSON only after its images.
+binding without needing Strava credentials. The scraper runs separately from the
+Worker, locally or in the manual GitHub Actions test described below. Both local
+and remote uploads publish the JSON only after its images.
 
 ## Repository layout
 
@@ -78,7 +79,10 @@ The repository contains only a backend, so there is no additional `backend/` wra
 
 ## Strava run scraper
 
-Requires Node.js 22.15+ and Google Chrome. Set `STRAVA_EMAIL`, `STRAVA_PASSWORD`, and `STRAVA_ATHLETE_ID` in the root `.env` file. Quote values containing `#`.
+Requires Node.js 22.15+ and Puppeteer's downloaded Chrome (installed by `npm ci`),
+or a browser selected using `PUPPETEER_EXECUTABLE_PATH`. Set `STRAVA_EMAIL`,
+`STRAVA_PASSWORD`, and `STRAVA_ATHLETE_ID` in the root `.env` file. Quote values
+containing `#`.
 
 From the project root:
 
@@ -100,3 +104,44 @@ Results are saved to `scrapers/strava/output/latest-runs.json` and summarized in
 Generated route PNGs are saved under `output/media/<activity-id>/`, with paths in JSON relative to the output folder. Existing downloaded photos from earlier runs are left in place, but future scrapes do not create photo files. Unavailable metrics are `null`, missing photos produce an empty array, and optional media failures are recorded in `mediaWarnings`. A route shape or an uploaded photo can still identify a location. The JSON also retains activity titles, descriptions, and Strava URLs, so do not treat the entire report as anonymous.
 
 The output folder is gitignored. Each execution uses a temporary browser profile and closes the browser after exporting. Navigation and element waits remain unlimited.
+
+### Test on GitHub Actions
+
+The manual [Test Strava scrape workflow](.github/workflows/test-strava-scrape.yml)
+runs Chrome in headed mode inside Xvfb, a virtual display on Ubuntu. It sets
+`STRAVA_HEADLESS=false`; set this variable to `true` only when explicitly testing
+headless Chrome. The runner provides Chrome and Xvfb, so the workflow uses that
+Chrome installation instead of downloading another browser.
+
+1. In the **Strevy** GitHub repository, open **Settings → Secrets and variables →
+   Actions → New repository secret**. Add `STRAVA_EMAIL`, `STRAVA_PASSWORD`, and
+   `STRAVA_ATHLETE_ID`, using the same values as your local `.env`.
+2. Commit and push the workflow, this documentation, and your scraper's
+   `STRAVA_HEADLESS` change to the repository's default branch. Keep `.env` and
+   the output directory gitignored. GitHub needs `workflow_dispatch` workflows
+   on the default branch before the manual run button is available.
+3. Open **Actions → Test Strava scrape → Run workflow**, select the branch, and
+   click **Run workflow**. If prompted, enable Actions for the repository.
+4. Open the run and inspect the **Scrape with a virtual display** and **Verify
+   route and map exports** logs. The verification also adds a table to the run
+   summary and fails if any exported run lacks a valid route or map PNG.
+5. Download **strava-scrape-output** from the run's **Artifacts** section to view
+   `latest-runs.json` and `media/<activity-id>/route.png` and `map.png`. Confirm
+   that the map actually contains the rendered route and background; PNG checks
+   alone cannot detect an image of a blank map.
+
+This test expects GPS media for every returned run. An activity that genuinely
+has no GPS route can fail that check even if browser rendering works. Output is
+retained for three days and is uploaded for inspection even after a verification
+failure, when files exist. Only the generated JSON and PNGs are included.
+
+The scrape step has a ten-minute limit because the scraper's own element waits
+are currently unlimited. If it times out, inspect its last logged stage. A
+successful local login does not establish that Strava will accept login from a
+GitHub runner.
+
+This workflow runs only when manually triggered. It does not upload to R2,
+deploy the API, or update the portfolio. No Cloudflare secrets are needed for
+this test. See GitHub's guides for
+[repository secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+and [manual runs](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
