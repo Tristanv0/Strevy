@@ -1,0 +1,29 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "strevy-api",
+	"main": "src/worker.js",
+	"compatibility_date": "2026-10-19",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"workers_dev": true,
+	"routes": [
+		{
+			"pattern": "api.tristancheng.com",
+			"custom_domain": true
+		}
+	],
+	"vars": {
+		"ALLOWED_ORIGINS": "https://tristancheng.com,https://www.tristancheng.com"
+	},
+	"r2_buckets": [
+		{
+			"binding": "STREVY_DATA",
+			"bucket_name": "strevy-data"
+		},
+		{
+			"bucket_name": "strevy-data",
+			"binding": "strevy_data"
+		}
+	]
+}

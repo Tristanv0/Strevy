@@ -1,42 +1,43 @@
-import { Router, static as serveStatic } from 'express';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { Router } from 'express';
+import { isMediaKey, withMediaUrl } from '../lib/media.js';
 
-const router = Router();
-const outputDirectory = new URL('../../scrapers/strava/output/', import.meta.url);
-const snapshotPath = new URL('latest-runs.json', outputDirectory);
+export default function createRunsRouter(store) {
+  const router = Router();
 
-function withMediaUrl(media, baseUrl) {
-  if (!media?.path) return media;
-  return { ...media, url: `${baseUrl}/${media.path}` };
-}
-
-router.get('/', async (req, res, next) => {
-  try {
-    // Read the latest completed scrape on each request, rather than caching an import.
-    const snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
-    const runs = snapshot.runs.map(run => ({
-      ...run,
-      routeImage: withMediaUrl(run.routeImage, req.baseUrl),
-      mapImage: withMediaUrl(run.mapImage, req.baseUrl),
-      photos: run.photos.map(photo => withMediaUrl(photo, req.baseUrl)),
-    }));
-    res.set('Cache-Control', 'no-store');
-    res.json({ ...snapshot, runs });
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return res.status(503).json({ error: 'Run data is not available yet.' });
+  router.get('/', async (req, res, next) => {
+    try {
+      // Read the latest completed scrape from disk or R2 on every request.
+      const snapshot = await store.readSnapshot();
+      if (snapshot === null) {
+        return res.status(503).json({ error: 'Run data is not available yet.' });
+      }
+      const runs = snapshot.runs.map(run => ({
+        ...run,
+        routeImage: withMediaUrl(run.routeImage, req.baseUrl),
+        mapImage: withMediaUrl(run.mapImage, req.baseUrl),
+        photos: run.photos.map(photo => withMediaUrl(photo, req.baseUrl)),
+      }));
+      res.set('Cache-Control', 'no-store');
+      res.json({ ...snapshot, runs });
+    } catch (error) {
+      next(error);
     }
-    next(error);
-  }
-});
+  });
 
-// Only the media folder is exposed; other scraper files remain inaccessible.
-router.use('/media', serveStatic(fileURLToPath(new URL('media/', outputDirectory)), {
-  dotfiles: 'deny',
-  index: false,
-  redirect: false,
-  maxAge: 0,
-}));
+  router.get('/media/:activityId/:filename', async (req, res, next) => {
+    try {
+      const key = `media/${req.params.activityId}/${req.params.filename}`;
+      if (!isMediaKey(key)) return next();
+      const image = await store.readMedia(key);
+      if (!image) return next();
+      res.set('Content-Type', image.contentType);
+      res.set('Cache-Control', 'public, max-age=0, must-revalidate');
+      if (image.etag) res.set('ETag', image.etag);
+      res.send(image.body);
+    } catch (error) {
+      next(error);
+    }
+  });
 
-export default router;
+  return router;
+}

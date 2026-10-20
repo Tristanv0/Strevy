@@ -16,13 +16,13 @@ Available endpoints:
 
 - `GET /` returns `{ "name": "Strevy API" }`.
 - `GET /health` returns `{ "status": "ok" }`. This checks that the API is responding, not whether a scrape succeeded.
-- `GET /api/runs` returns the latest saved `latest-runs.json` snapshot, with a `url` added to each locally stored image entry. It reads the file on each request, so a completed scrape is available without restarting the server. It returns HTTP 503 if no snapshot exists yet.
+- `GET /api/runs` returns the latest saved `latest-runs.json` snapshot, with a `url` added to each stored image entry. It reads the snapshot from local disk or R2 on every request, so updated data is available without restarting the server. It returns HTTP 503 if no snapshot exists yet.
 - `GET /api/runs/media/<activity-id>/route.png` serves the transparent route-only image; `map.png` in the same folder serves the route with Strava's map background. Existing local photo files can also be served from this media folder. Missing files return a JSON 404 response; directory listings are disabled.
 - Unrecognized endpoints return a JSON 404 response.
 
 Optionally set `PORT` and `HOST` in the root `.env` or environment. For a deployment that needs to accept connections on all interfaces, set `HOST=0.0.0.0` and use the port provided by your host.
 
-The API server does not launch Chrome or run the scraper. The runs endpoint returns the saved report, including its activity details and photo URLs, without authentication. CORS and scheduled scraping are not configured yet.
+The API server does not launch Chrome or run the scraper. The runs endpoint returns the saved report, including its activity details and photo URLs, without authentication. Browser access is controlled by the comma-separated `ALLOWED_ORIGINS` setting; the local Node server defaults to localhost ports 3000 and 5173. Scheduled scraping is not configured yet.
 
 Local image URLs in the response are relative to the API origin, for example `/api/runs/media/123/route.png`. Uploaded photo URLs remain unchanged. A website on another origin should resolve a local image URL against the API origin:
 
@@ -37,14 +37,37 @@ const imageSrc = routeImageUrl ? new URL(routeImageUrl, apiOrigin).href : null;
 
 The JSON response contains image URLs; image bytes are fetched separately using those URLs. The saved JSON file is not modified by API requests.
 
+## Cloudflare Workers and R2
+
+Cloudflare deployment is configured for `api.tristancheng.com`. See the
+[setup guide](docs/cloudflare.md) for account setup, R2 bucket creation, uploads,
+deployment, and website integration.
+
+```sh
+npm run upload:r2 -- --local    # Seed the local R2 emulator
+npm run dev:worker             # Run the Worker locally on port 8787
+npm run upload:r2 -- --remote   # Upload to Cloudflare after bucket creation/login
+npm run deploy                # Publish the Worker and custom domain
+```
+
+The private `strevy-data` bucket stores JSON and images. The Worker uses its R2
+binding without needing Strava credentials. The scraper remains a separate local
+job. Both local and remote uploads publish the JSON only after its images.
+
 ## Repository layout
 
 ```text
 src/
-  app.js             Express application and middleware
-  server.js          Environment loading and HTTP listener
+  app.js             Shared Express application factory and middleware
+  server.js          Local Node listener using disk storage
+  worker.js          Cloudflare Workers entry point using R2
   routes/health.js   Health endpoint
   routes/runs.js     Saved runs and associated media
+  storage/           Local-disk and R2 storage adapters
+scripts/
+  upload-r2.mjs      Upload referenced PNGs, then the JSON snapshot
+docs/cloudflare.md   Cloudflare setup and deployment instructions
+wrangler.jsonc       Worker, domain, CORS origins, and R2 binding
 scrapers/
   strava/            Puppeteer scraper and helpers
     output/          Saved JSON and generated route images (gitignored)

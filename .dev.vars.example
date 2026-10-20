@@ -1,0 +1,3 @@
+# Copy to .dev.vars for Wrangler development. This also keeps Wrangler from
+# loading the scraper's root .env file. No Strava credentials are needed here.
+ALLOWED_ORIGINS="https://tristancheng.com,https://www.tristancheng.com,http://localhost:3000,http://localhost:5173"
