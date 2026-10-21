@@ -1,8 +1,8 @@
 # Deploy Strevy to Cloudflare Workers and R2
 
 The API runs at `https://api.tristancheng.com`. Its private R2 bucket stores the
-Strava and Hevy output in separate prefixes. The Worker reads Strava objects and serves the existing
-`/api/runs` and `/api/runs/media/...` endpoints. There is no database to create.
+Strava and Hevy output in separate prefixes. The Worker serves `/api/runs`,
+`/api/runs/media/...`, and `/api/workouts`. There is no database to create.
 
 This setup uses Cloudflare's [Express integration](https://developers.cloudflare.com/workers/tutorials/deploy-an-express-app/)
 and [R2 Worker bindings](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/).
@@ -29,12 +29,12 @@ from loading the scraper's `.env`. The Worker does not need Strava credentials.
 Load your existing scraper output into the local R2 emulator:
 
 ```sh
-npm run upload:r2 -- --local --source strava
+npm run upload:r2 -- --local --source all
 npm run dev:worker
 ```
 
-Open `http://localhost:8787/health` and `http://localhost:8787/api/runs`.
-The image URLs returned by the second endpoint work on the same host. Local R2
+Open `http://localhost:8787/health`, `http://localhost:8787/api/runs`, and
+`http://localhost:8787/api/workouts`. The runs image URLs work on the same host. Local R2
 data is kept in `.wrangler/state/` and is separate from your Cloudflare bucket.
 These commands do not require creating a cloud bucket or publishing the API.
 
@@ -141,7 +141,8 @@ paths and image URLs remain `/api/runs` and `/api/runs/media/...`.
 
 Legacy objects such as `latest-runs.json` and `media/...` at the bucket root are
 left untouched. After verifying the updated deployment, remove those separately
-if desired. Uploading Hevy stores its output but does not add a Hevy API endpoint.
+if desired. The workouts endpoint reads `hevy/latest-workouts.json`; upload Hevy
+and deploy the updated Worker to make it available.
 
 ## 5. Deploy the API and custom domain
 
@@ -166,9 +167,10 @@ After deployment and domain activation, visit:
 
 - `https://api.tristancheng.com/health`
 - `https://api.tristancheng.com/api/runs`
+- `https://api.tristancheng.com/api/workouts`
 
-The health check confirms the API is responding. Before a snapshot is uploaded,
-the runs endpoint returns HTTP 503. Missing image objects return JSON 404.
+The health check confirms the API is responding. Before a source's snapshot is
+uploaded, its endpoint returns HTTP 503. Missing image objects return JSON 404.
 
 From your website:
 

@@ -2,8 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import healthRouter from './routes/health.js';
 import createRunsRouter from './routes/runs.js';
+import createWorkoutsRouter from './routes/workouts.js';
 
-export default function createApp({ runsStore, allowedOrigins = '' }) {
+export default function createApp({ runsStore, workoutsStore, allowedOrigins = '' }) {
   const app = express();
 
   app.disable('x-powered-by');
@@ -18,6 +19,7 @@ export default function createApp({ runsStore, allowedOrigins = '' }) {
   });
   app.use('/health', healthRouter);
   app.use('/api/runs', createRunsRouter(runsStore));
+  app.use('/api/workouts', createWorkoutsRouter(workoutsStore));
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Endpoint not found' });

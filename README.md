@@ -1,5 +1,5 @@
 # Strevy
-An API for bringing Strava runs and Hevy workouts together. Both scrapers are implemented; the API currently exposes saved Strava runs and media.
+An API for bringing Strava runs and Hevy workouts together. The API exposes saved Strava runs and media, plus Hevy workouts.
 
 ## Express API
 
@@ -18,11 +18,12 @@ Available endpoints:
 - `GET /health` returns `{ "status": "ok" }`. This checks that the API is responding, not whether a scrape succeeded.
 - `GET /api/runs` returns the latest saved `latest-runs.json` snapshot, with a `url` added to each stored image entry. It reads the snapshot from local disk or R2 on every request, so updated data is available without restarting the server. It returns HTTP 503 if no snapshot exists yet.
 - `GET /api/runs/media/<activity-id>/route.png` serves the transparent route-only image; `map.png` in the same folder serves the route with Strava's map background. Existing local photo files can also be served from this media folder. Missing files return a JSON 404 response; directory listings are disabled.
+- `GET /api/workouts` returns the complete saved Hevy report from `scrapers/hevy/output/latest-workouts.json` locally or `hevy/latest-workouts.json` in R2. It includes the latest five full workouts and current-month date/time summaries. The endpoint reads the file on every request, uses `Cache-Control: no-store`, and returns HTTP 503 when no snapshot exists yet.
 - Unrecognized endpoints return a JSON 404 response.
 
 Optionally set `PORT` and `HOST` in the root `.env` or environment. For a deployment that needs to accept connections on all interfaces, set `HOST=0.0.0.0` and use the port provided by your host.
 
-The API server does not launch Chrome or run the scraper. The runs endpoint returns the saved report, including its activity details and photo URLs, without authentication. Browser access is controlled by the comma-separated `ALLOWED_ORIGINS` setting; the local Node server defaults to localhost ports 3000 and 5173. Scheduled scraping is not configured yet.
+The API server does not launch Chrome or run the scraper. The runs and workouts endpoints return their saved reports without authentication. Browser access is controlled by the comma-separated `ALLOWED_ORIGINS` setting; the local Node server defaults to localhost ports 3000 and 5173. Scheduled scraping is not configured yet.
 
 Local image URLs in the response are relative to the API origin, for example `/api/runs/media/123/route.png`. Uploaded photo URLs remain unchanged. A website on another origin should resolve a local image URL against the API origin:
 
@@ -36,6 +37,14 @@ const imageSrc = routeImageUrl ? new URL(routeImageUrl, apiOrigin).href : null;
 ```
 
 The JSON response contains image URLs; image bytes are fetched separately using those URLs. The saved JSON file is not modified by API requests.
+
+Fetch Hevy workouts from your frontend in the same way:
+
+```js
+const response = await fetch('https://api.tristancheng.com/api/workouts');
+if (!response.ok) throw new Error('Could not load workouts');
+const { workouts, scrapedAt, period } = await response.json();
+```
 
 ## Cloudflare Workers and R2
 
@@ -61,7 +70,7 @@ prefix in R2, then publishes JSON after all files. The default source is `strava
 `--replace` is still accepted but is no longer needed. Use `--dry-run` to preview
 without contacting R2. Run one upload at a time; replacement is not atomic.
 
-The Worker reads Strava objects under `strava/`; API image URLs stay the same.
+The Worker reads Strava objects under `strava/` and Hevy JSON under `hevy/`; API image URLs stay the same.
 For an existing deployment, upload Strava with the new script and redeploy the
 Worker to switch storage paths. Legacy objects at the bucket root are retained
 and can be removed separately after checking the updated API.
@@ -75,6 +84,7 @@ src/
   worker.js          Cloudflare Workers entry point using R2
   routes/health.js   Health endpoint
   routes/runs.js     Saved runs and associated media
+  routes/workouts.js Saved Hevy workout report
   storage/           Local-disk and R2 storage adapters
 scripts/
   upload-r2.mjs      Replace selected Strava/Hevy R2 folders with local output
@@ -171,8 +181,9 @@ to request headless mode; the verified default runs with a visible browser.
 
 Hevy output is gitignored. Upload it to R2 with
 `npm run upload:r2 -- --remote --source hevy`, or upload both sources with
-`--source all`. The API routes and manual Strava GitHub Actions workflow do not
-yet expose or scrape Hevy workouts.
+`npm run upload:r2 -- --remote --source all`. Fetch the saved report through
+`GET /api/workouts`. The manual Strava GitHub Actions workflow does not scrape
+Hevy workouts.
 
 ## Test Strava scraper on GitHub Actions
 

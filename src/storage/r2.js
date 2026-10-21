@@ -1,6 +1,16 @@
 import { Buffer } from 'node:buffer';
 import { isMediaKey } from '../lib/media.js';
 
+export function createR2WorkoutsStore(bucket) {
+  if (!bucket) throw new Error('The STREVY_DATA R2 binding is missing.');
+  return {
+    async readSnapshot() {
+      const object = await bucket.get('hevy/latest-workouts.json');
+      return object ? object.json() : null;
+    },
+  };
+}
+
 export function createR2RunsStore(bucket) {
   if (!bucket) throw new Error('The STREVY_DATA R2 binding is missing.');
   return {

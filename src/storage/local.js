@@ -3,6 +3,19 @@ import { isMediaKey } from '../lib/media.js';
 
 const defaultDirectory = new URL('../../scrapers/strava/output/', import.meta.url);
 
+export function createLocalWorkoutsStore(outputDirectory = new URL('../../scrapers/hevy/output/', import.meta.url)) {
+  return {
+    async readSnapshot() {
+      try {
+        return JSON.parse(await readFile(new URL('latest-workouts.json', outputDirectory), 'utf8'));
+      } catch (error) {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      }
+    },
+  };
+}
+
 export function createLocalRunsStore(outputDirectory = defaultDirectory) {
   async function read(key) {
     try {

@@ -144,6 +144,6 @@ export function workoutReport(workouts, { account, preferences = {}, now = new D
     count: selected.length, detailedCount: fullCount, summaryCount: selected.length - fullCount,
     workouts: selected.map((workout, index) => index < fullCount
       ? fullWorkout(workout, { timeZone, weightUnit: preferences.weight_unit })
-      : { date: workoutDate(workout, timeZone), time: workoutTime(workout, timeZone) }),
+      : { title: workout.name, date: workoutDate(workout, timeZone), time: workoutTime(workout, timeZone) }),
   };
 }
