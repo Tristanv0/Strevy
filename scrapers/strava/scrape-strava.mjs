@@ -2,7 +2,7 @@ import puppeteer from 'puppeteer';
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { scrapeLatestRuns } from './scrape-runs.mjs';
 import { enrichRuns } from './enrich-runs.mjs';
 import { findVisibleLoginControl, clickLoginControl } from './login-controls.mjs';
@@ -228,6 +228,10 @@ try {
     limit: 5, clickAndPause, pause: () => pause(1_000, 1_800),
   });
   const outputDirectory = new URL('./output/', import.meta.url);
+  stage = 'clearing the previous local output';
+  console.log('Clearing previous output before exporting the new runs.');
+  await rm(outputDirectory, { recursive: true, force: true });
+  await mkdir(outputDirectory, { recursive: true });
   stage = 'collecting run metrics, uploaded photos, and route images';
   const runs = await enrichRuns(page, summaries, {
     athleteId, outputDirectory, pause: () => pause(1_000, 1_800),
@@ -235,7 +239,6 @@ try {
   stage = 'saving the run data';
   const outputPath = new URL('latest-runs.json', outputDirectory);
   const temporaryPath = new URL('latest-runs.json.tmp', outputDirectory);
-  await mkdir(outputDirectory, { recursive: true });
   await writeFile(temporaryPath, `${JSON.stringify({
     athleteId,
     scrapedAt: new Date().toISOString(),

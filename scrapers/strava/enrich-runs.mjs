@@ -1,6 +1,6 @@
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { normalizeRoute, selectOwnPhotos, routePng } from './run-media.mjs';
-import { mapViewPng } from './map-view.mjs';
+import { collectMapImages } from './map-view.mjs';
 
 const number = value => value === null || value === undefined || value === ''
   ? null : Number.isFinite(Number(value)) ? Number(value) : null;
@@ -95,18 +95,15 @@ async function savePng(directory, filename, dataUrl) {
   await rename(temporary, path);
 }
 
-async function readMapImage(page, run, athleteId) {
-  try {
-    return await mapViewPng(page);
-  } catch {
-    // Occasionally Strava loads the activity but leaves its map uninitialized.
-    // Reopen this run once and verify ownership again before another capture.
-    await readRunDetails(page, run, athleteId);
-    return mapViewPng(page);
-  }
-}
-
 export async function enrichRuns(page, runs, { athleteId, outputDirectory, pause } = {}) {
+  let mapImages = new Map();
+  try {
+    console.log('Reading static map image URLs from your athlete feed.');
+    mapImages = await collectMapImages(page, runs, athleteId);
+    console.log(`Found static map images for ${mapImages.size} of ${runs.length} runs.`);
+  } catch (error) {
+    console.warn(`Static map images unavailable: ${error.message}`);
+  }
   // Render route images on a blank page outside the signed-in Strava context.
   const mediaContext = await page.browser().createBrowserContext();
   const renderer = await mediaContext.newPage();
@@ -132,17 +129,9 @@ export async function enrichRuns(page, runs, { athleteId, outputDirectory, pause
       } else {
         result.mediaWarnings.push('No visible GPS route with a matching privacy mask was available.');
       }
-      try {
-        const map = await readMapImage(page, run, athleteId);
-        await mkdir(directory, { recursive: true, mode: 0o700 });
-        await savePng(directory, 'map.png', map.dataUrl);
-        result.mapImage = {
-          path: relativeDirectory + 'map.png', width: map.width, height: map.height,
-          containsBasemap: true, source: 'strava-activity-map', containsGpsMetadata: false,
-        };
-      } catch {
-        result.mediaWarnings.push('Strava map view could not be captured.');
-      }
+      // Only attach the feed image after this activity's ownership was verified.
+      result.mapImage = mapImages.get(run.id) ?? null;
+      if (!result.mapImage) result.mediaWarnings.push('No static map image URL was found for this run in your athlete feed.');
       // Do not copy raw GPS coordinates, privacy masks, or photo geotags into JSON.
       results.push(result);
       console.log(`Run ${run.id}: metrics collected, ${result.photos.length} uploaded photos, route ${result.routeImage ? 'exported' : 'unavailable'}, map ${result.mapImage ? 'exported' : 'unavailable'}.`);

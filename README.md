@@ -1,5 +1,5 @@
 # Strevy
-An API for bringing Strava runs and Hevy workouts together. Saved Strava runs and route images are available through the API; Hevy integration will be added next.
+An API for bringing Strava runs and Hevy workouts together. Both scrapers are implemented; the API currently exposes saved Strava runs and media.
 
 ## Express API
 
@@ -44,16 +44,27 @@ Cloudflare deployment is configured for `api.tristancheng.com`. See the
 deployment, and website integration.
 
 ```sh
-npm run upload:r2 -- --local    # Seed the local R2 emulator
+npm run upload:r2 -- --local --source strava  # Replace local R2 Strava data
 npm run dev:worker             # Run the Worker locally on port 8787
-npm run upload:r2 -- --remote   # Upload to Cloudflare after bucket creation/login
+npm run upload:r2 -- --remote --source strava  # Replace only strava/
+npm run upload:r2 -- --remote --source hevy    # Replace only hevy/
+npm run upload:r2 -- --remote --source all     # Replace both source folders
 npm run deploy                # Publish the Worker and custom domain
 ```
 
 The private `strevy-data` bucket stores JSON and images. The Worker uses its R2
 binding without needing Strava credentials. The scraper runs separately from the
 Worker, locally or in the manual GitHub Actions test described below. Both local
-and remote uploads publish the JSON only after its images.
+and remote uploads validate and stage the selected output directories before
+deleting objects. Each upload replaces only the selected `strava/` or `hevy/`
+prefix in R2, then publishes JSON after all files. The default source is `strava`;
+`--replace` is still accepted but is no longer needed. Use `--dry-run` to preview
+without contacting R2. Run one upload at a time; replacement is not atomic.
+
+The Worker reads Strava objects under `strava/`; API image URLs stay the same.
+For an existing deployment, upload Strava with the new script and redeploy the
+Worker to switch storage paths. Legacy objects at the bucket root are retained
+and can be removed separately after checking the updated API.
 
 ## Repository layout
 
@@ -66,12 +77,14 @@ src/
   routes/runs.js     Saved runs and associated media
   storage/           Local-disk and R2 storage adapters
 scripts/
-  upload-r2.mjs      Upload referenced PNGs, then the JSON snapshot
+  upload-r2.mjs      Replace selected Strava/Hevy R2 folders with local output
 docs/cloudflare.md   Cloudflare setup and deployment instructions
 wrangler.jsonc       Worker, domain, CORS origins, and R2 binding
 scrapers/
   strava/            Puppeteer scraper and helpers
     output/          Saved JSON and generated route images (gitignored)
+  hevy/              Latest five full workouts and current-month summaries
+    output/          latest-workouts.json (gitignored)
 package.json         Shared dependencies and commands
 ```
 
@@ -99,13 +112,69 @@ Results are saved to `scrapers/strava/output/latest-runs.json` and summarized in
 - `distanceMeters` and `elevationGainMeters`, using precise activity values when available.
 - `photos`, containing `{ "id": "...", "url": "https://..." }` entries for the athlete's own uploaded photos attached to that run. The scraper stores the original image URLs without downloading or re-encoding photos. These remote URLs may change or expire; the linked images retain any original metadata.
 - `routeImage`, referencing a transparent PNG containing only the route line. No map tiles, street names, landmarks, start/end markers, raw GPS coordinates, or geographic metadata are exported. Strava's privacy-hidden samples are omitted without connecting across those gaps; routes without a matching privacy mask are not exported.
-- `mapImage`, referencing a separate `map.png` screenshot of the map displayed on the signed-in activity page, including its route, geographic background, and visible map attribution. This image can show street names and identifiable locations. It is separate from `routeImage`; when the rendered map is unavailable, this field is `null` and `mediaWarnings` explains the missing export. An uninitialized map is retried once by reopening the activity and checking ownership again.
+- `mapImage`, containing the original static map image `url` from the athlete feed's `img[data-testid="map"]`, plus its dimensions when available, `containsBasemap: true`, and `source: "strava-feed-map"`. The scraper matches the image's enclosing activity link to the run ID and attaches it only after verifying activity ownership. Like uploaded photos, this stores the URL without downloading, re-encoding, or taking a screenshot. After opening the profile, it spends up to 20 seconds scanning lazy-loaded entries and following the profile's existing week links for older runs; missing map URLs produce `null` and a `mediaWarnings` entry. This image includes the map background and route as provided by Strava, and its URL can change or expire.
 
-Generated route PNGs are saved under `output/media/<activity-id>/`, with paths in JSON relative to the output folder. Existing downloaded photos from earlier runs are left in place, but future scrapes do not create photo files. Unavailable metrics are `null`, missing photos produce an empty array, and optional media failures are recorded in `mediaWarnings`. A route shape or an uploaded photo can still identify a location. The JSON also retains activity titles, descriptions, and Strava URLs, so do not treat the entire report as anonymous.
+Generated transparent route PNGs are saved under `output/media/<activity-id>/`, with paths in JSON relative to the output folder. Photos and static maps use remote URLs; new scrapes do not create `map.png`. Each scrape deletes and recreates the local output directory after login and activity selection succeed, removing older snapshots, images, and temporary files before exporting. A later extraction failure can leave partial output. This cleanup does not delete objects from R2. Unavailable metrics are `null`, missing photos produce an empty array, and optional media failures are recorded in `mediaWarnings`. A route shape, map, or uploaded photo can still identify a location. The JSON also retains activity titles, descriptions, and Strava URLs, so do not treat the entire report as anonymous.
 
 The output folder is gitignored. Each execution uses a temporary browser profile and closes the browser after exporting. Navigation and element waits remain unlimited.
 
-### Test on GitHub Actions
+## Hevy workout scraper
+
+Set `HEVY_EMAIL` and `HEVY_PASSWORD` in the root `.env` file, then run from the
+repository root:
+
+```sh
+npm run scrape:hevy
+```
+
+The scraper uses Puppeteer to log in at `https://hevy.com/login`, then reads your
+own profile's workout responses while scrolling its history. It verifies the
+signed-in account against every workout owner and ignores the social feed.
+No Hevy Pro API key is needed.
+
+The export always includes the latest five workouts, even when they fall in a
+previous month. Additional summaries cover only the current calendar month,
+from the first day at local midnight through the time the scrape starts.
+`period.start` and `period.end` record that summary window as UTC timestamps;
+the five full workouts can fall before `period.start`. Dates, summary times,
+and the month boundary use `America/Toronto` by default; set `HEVY_TIMEZONE`
+to another IANA timezone if needed.
+
+Results are saved to `scrapers/hevy/output/latest-workouts.json`, newest first:
+
+- The latest five workouts **across your history** contain exercises and every
+  set, including warmups, reps, weight, RPE, duration/distance when recorded,
+  superset IDs, notes, start/end times, total duration, volume, personal and
+  yearly records, and average BPM when available. Calories are included when
+  recorded. Missing metrics stay `null`; no heart rate is guessed.
+- Remaining workouts **in the current calendar month** contain only `date`
+  (`YYYY-MM-DD`) and `time` (`HH:mm:ss`, 24-hour local start time). Workouts
+  already included in the latest five are not duplicated as summaries.
+
+For example, on October 2 the full workouts can extend into September, with
+extra summaries only for October 1–2. With one workout each day October 1–7,
+an October 8 scrape exports October 3–7 in full and October 1–2 as summaries.
+
+Weights and volume include canonical kilograms and converted display values
+using your Hevy unit preference. Display duration rounds to the nearest minute,
+while `duration.seconds` retains the precise interval. Volume uses Hevy's
+reported `estimated_volume_kg`, retaining its warmup-inclusion flag; it is not
+recalculated from sets. Records preserve Hevy's metric types and values and are
+attached to their exercise and set. Raw heart-rate samples, GPS data, account
+email, credentials, and session tokens are not exported.
+
+Each successful scrape atomically replaces the previous JSON. A failed or
+incomplete history read leaves the previous export intact. The browser uses a
+temporary profile and closes afterward; no browser profile is saved. Chrome
+must be installed, or set `PUPPETEER_EXECUTABLE_PATH`. Set `HEVY_HEADLESS=true`
+to request headless mode; the verified default runs with a visible browser.
+
+Hevy output is gitignored. Upload it to R2 with
+`npm run upload:r2 -- --remote --source hevy`, or upload both sources with
+`--source all`. The API routes and manual Strava GitHub Actions workflow do not
+yet expose or scrape Hevy workouts.
+
+## Test Strava scraper on GitHub Actions
 
 The manual [Test Strava scrape workflow](.github/workflows/test-strava-scrape.yml)
 runs Chrome in headed mode inside Xvfb, a virtual display on Ubuntu. It sets
@@ -124,16 +193,19 @@ Chrome installation instead of downloading another browser.
    click **Run workflow**. If prompted, enable Actions for the repository.
 4. Open the run and inspect the **Scrape with a virtual display** and **Verify
    route and map exports** logs. The verification also adds a table to the run
-   summary and fails if any exported run lacks a valid route or map PNG.
+   summary and fails if any exported run lacks a valid route PNG or an accessible
+   static map image URL. Older snapshots with local map PNGs are also accepted.
 5. Download **strava-scrape-output** from the run's **Artifacts** section to view
-   `latest-runs.json` and `media/<activity-id>/route.png` and `map.png`. Confirm
-   that the map actually contains the rendered route and background; PNG checks
-   alone cannot detect an image of a blank map.
+   `latest-runs.json` and `media/<activity-id>/route.png`. Open the `mapImage.url`
+   from the JSON in a browser to inspect the original static map. Confirm that
+   it contains the expected route and background; file/HTTP checks alone cannot
+   verify image content.
 
 This test expects GPS media for every returned run. An activity that genuinely
 has no GPS route can fail that check even if browser rendering works. Output is
 retained for three days and is uploaded for inspection even after a verification
-failure, when files exist. Only the generated JSON and PNGs are included.
+failure, when files exist. Only the generated JSON and local PNGs are included;
+remote maps and photos remain URLs in that JSON.
 
 The scrape step has a ten-minute limit because the scraper's own element waits
 are currently unlimited. If it times out, inspect its last logged stage. A

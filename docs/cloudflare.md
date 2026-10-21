@@ -1,7 +1,7 @@
 # Deploy Strevy to Cloudflare Workers and R2
 
 The API runs at `https://api.tristancheng.com`. Its private R2 bucket stores the
-JSON snapshot and PNGs. The Worker reads those objects and serves the existing
+Strava and Hevy output in separate prefixes. The Worker reads Strava objects and serves the existing
 `/api/runs` and `/api/runs/media/...` endpoints. There is no database to create.
 
 This setup uses Cloudflare's [Express integration](https://developers.cloudflare.com/workers/tutorials/deploy-an-express-app/)
@@ -29,7 +29,7 @@ from loading the scraper's `.env`. The Worker does not need Strava credentials.
 Load your existing scraper output into the local R2 emulator:
 
 ```sh
-npm run upload:r2 -- --local
+npm run upload:r2 -- --local --source strava
 npm run dev:worker
 ```
 
@@ -80,35 +80,68 @@ or attach a public domain to the bucket; the API serves the objects.
 If you choose another bucket name, update `bucket_name` and pass
 `--bucket YOUR_BUCKET` to the upload command.
 
-## 4. Upload the existing snapshot and images
+## 4. Upload Strava, Hevy, or both
 
 Preview the objects first if desired:
 
 ```sh
-npm run upload:r2 -- --remote --dry-run
+npm run upload:r2 -- --remote --source all --dry-run
 ```
 
-Then upload them:
+Upload either source separately or both together:
 
 ```sh
-npm run upload:r2 -- --remote
+npm run upload:r2 -- --remote --source strava
+npm run upload:r2 -- --remote --source hevy
+npm run upload:r2 -- --remote --source all
 ```
 
-The script validates the snapshot's local PNG paths and captures their contents
-before uploading. It uploads only referenced local images, preserves external
-photo URLs, and publishes `latest-runs.json` last. If a media upload fails, the
-new JSON is not published. Earlier image uploads are not rolled back.
+Each command replaces only its selected source folders in R2 with all regular
+files from the corresponding `scrapers/<source>/output/` directories. Strava
+uploads leave `hevy/` intact; Hevy uploads leave `strava/` intact; `all` replaces
+both. Other bucket objects are never deleted. The default source is `strava`.
 
-The bucket layout matches the local output layout:
+The bucket layout is:
 
 ```text
-latest-runs.json
-media/<activity-id>/route.png
-media/<activity-id>/map.png
+strava/latest-runs.json
+strava/media/<activity-id>/route.png
+strava/media/<activity-id>/map.png
+hevy/latest-workouts.json
 ```
 
+New scrapes store the static Strava map in `mapImage.url`, like uploaded photos.
+Those remote images are referenced in the JSON and are not downloaded to R2.
+The `map.png` layout above remains supported for older screenshot-based exports.
+
 Use `--remote` explicitly for cloud uploads. Without it, the upload command uses
-the local emulator. It does not delete older objects.
+the local emulator. `--replace` remains accepted for older commands, but all
+uploads now replace the selected source folders automatically. Local files no
+longer referenced by a snapshot are still uploaded if they remain in its output
+directory. `--directory PATH` overrides the output directory for a single source;
+it cannot be combined with `--source all`.
+
+The script validates both snapshots when uploading `all`, validates Strava's
+referenced PNGs, and stages every file before any deletion. It rejects symlinks
+and unfinished `.tmp` files. For each selected prefix, it lists all pages before
+deleting in batches of up to 1,000. Listing/deletion uses Wrangler's R2 binding
+and the same Cloudflare login; no separate S3 access keys are required. Media and
+other files are uploaded before either selected JSON snapshot.
+
+Replacement is not atomic: the API can return 503 while `strava/` is being
+refilled. A failed upload after deletion can leave partial data; rerun the upload
+after fixing the failure. Run one upload at a time. For a local-only test, use
+`--local` instead of `--remote`.
+
+### Existing deployments
+
+The Worker now reads `strava/latest-runs.json` and `strava/media/...`. Upload
+Strava using the updated script, then deploy the updated Worker. Public endpoint
+paths and image URLs remain `/api/runs` and `/api/runs/media/...`.
+
+Legacy objects such as `latest-runs.json` and `media/...` at the bucket root are
+left untouched. After verifying the updated deployment, remove those separately
+if desired. Uploading Hevy stores its output but does not add a Hevy API endpoint.
 
 ## 5. Deploy the API and custom domain
 
@@ -149,7 +182,8 @@ const imageSrc = runs[0]?.routeImage?.url
   : null;
 ```
 
-Use `mapImage.url` for the image with street names and a map background.
+Use `mapImage.url` for the image with street names and a map background. It may
+be an absolute Strava CDN URL; older local screenshots use an API-relative URL.
 The GET endpoints publish the full saved report without authentication, as the
 local API does. CORS permits browser reads from your configured website origins;
 it does not make the API private.
@@ -165,7 +199,7 @@ npm run scrape:strava
 After it succeeds, upload the new output:
 
 ```sh
-npm run upload:r2 -- --remote
+npm run upload:r2 -- --remote --source strava
 ```
 
 The deployed API reads R2 on every request, so it does not need redeployment when

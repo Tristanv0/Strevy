@@ -7,3 +7,4 @@ node_modules
 dist/
 browser-profile/
 scrapers/strava/output/
+scrapers/hevy/output/

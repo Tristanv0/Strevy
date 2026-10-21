@@ -52,6 +52,7 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { appendFile, readFile } from 'node:fs/promises';
+          import { approvedPhotoUrl } from './scrapers/strava/run-media.mjs';
           const output = new URL('./scrapers/strava/output/', `file://${process.cwd()}/`);
           const { runs } = JSON.parse(await readFile(new URL('latest-runs.json', output), 'utf8'));
           if (!Array.isArray(runs) || runs.length === 0) throw new Error('No runs were exported.');
@@ -64,14 +65,21 @@ jobs:
               ['Route', 'routeImage', 'route.png'], ['Map', 'mapImage', 'map.png'],
             ]) {
               let valid = false;
-              if (/^\d+$/.test(run.id) && run[field]?.path === `media/${run.id}/${filename}`) {
+              if (field === 'mapImage' && approvedPhotoUrl(run[field]?.url)) {
+                try {
+                  const response = await fetch(run[field].url, { signal: AbortSignal.timeout(10_000) });
+                  valid = response.ok && (response.headers.get('content-type') ?? '').startsWith('image/');
+                  if (valid) valid = (await response.arrayBuffer()).byteLength > 0;
+                  else await response.body?.cancel();
+                } catch { /* Report unavailable remote maps without logging signed image URLs. */ }
+              } else if (/^\d+$/.test(run.id) && run[field]?.path === `media/${run.id}/${filename}`) {
                 try {
                   const png = await readFile(new URL(run[field].path, output));
                   valid = png.length >= 24 && png.subarray(0, 8).equals(signature)
                     && png.readUInt32BE(16) > 0 && png.readUInt32BE(20) > 0;
                 } catch { /* Report the missing file with the rest of this run's media. */ }
               }
-              row[label] = valid ? 'Saved' : 'Missing or invalid';
+              row[label] = valid ? (run[field]?.path ? 'Saved' : 'URL verified') : 'Missing or invalid';
               if (!valid) failed = true;
             }
             rows.push(row);
@@ -82,7 +90,7 @@ jobs:
             '## Strava media exports', '', '| Run | Route | Map |', '| --- | --- | --- |',
             ...rows.map(row => `| ${row.Run} | ${row.Route} | ${row.Map} |`), '',
           ].join('\n'));
-          if (failed) throw new Error('Some route or map images are missing. Inspect the logs and output artifact.');
+          if (failed) throw new Error('Some route or map images are missing or inaccessible. Inspect the logs and output artifact.');
           NODE
 
       - name: Save scrape output for inspection
