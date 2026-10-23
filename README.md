@@ -23,7 +23,7 @@ Available endpoints:
 
 Optionally set `PORT` and `HOST` in the root `.env` or environment. For a deployment that needs to accept connections on all interfaces, set `HOST=0.0.0.0` and use the port provided by your host.
 
-The API server does not launch Chrome or run the scraper. The runs and workouts endpoints return their saved reports without authentication. Browser access is controlled by the comma-separated `ALLOWED_ORIGINS` setting; the local Node server defaults to localhost ports 3000 and 5173. Scheduled scraping is not configured yet.
+The runs and workouts endpoints return their saved reports without authentication. Browser access is controlled by the comma-separated `ALLOWED_ORIGINS` setting; the local Node server defaults to localhost ports 3000 and 5173. API requests read saved data. A separate Cloudflare workflow refreshes Hevy on the nightly schedule below.
 
 Local image URLs in the response are relative to the API origin, for example `/api/runs/media/123/route.png`. Uploaded photo URLs remain unchanged. A website on another origin should resolve a local image URL against the API origin:
 
@@ -51,6 +51,18 @@ const { workouts, scrapedAt, period } = await response.json();
 Cloudflare deployment is configured for `api.tristancheng.com`. See the
 [setup guide](docs/cloudflare.md) for account setup, R2 bucket creation, uploads,
 deployment, and website integration.
+
+The [nightly Hevy workflow](docs/cloudflare.md#nightly-hevy-refresh) uses Cloudflare
+Cron Triggers at **11:59 p.m. Toronto time**, including daylight-saving changes:
+scrape Hevy → update `hevy/latest-workouts.json` in R2 → trigger the frontend's
+Workers Builds deploy hook. Strava scraping continues to run locally.
+
+```sh
+npm run secrets:hevy     # Upload the three automation secrets from .env
+npm run deploy          # Deploy the API, workflow, and cron configuration
+npm run refresh:hevy    # Start an additional cloud refresh now
+npm run test:automation # Check scheduling and pipeline failure handling
+```
 
 ```sh
 npm run upload:r2 -- --local --source strava  # Replace local R2 Strava data

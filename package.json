@@ -14,9 +14,13 @@
     "deploy": "wrangler deploy",
     "upload:r2": "node scripts/upload-r2.mjs",
     "scrape:strava": "node scrapers/strava/scrape-strava.mjs",
-    "scrape:hevy": "node scrapers/hevy/scrape-hevy.mjs"
+    "scrape:hevy": "node scrapers/hevy/scrape-hevy.mjs",
+    "secrets:hevy": "node scripts/configure-hevy-secrets.mjs",
+    "refresh:hevy": "wrangler workflows trigger strevy-hevy-refresh",
+    "test:automation": "node --test src/automation/hevy-refresh.test.js"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
     "cors": "^2.8.6",
     "express": "^5.3.0",
     "puppeteer": "^25.12.0"

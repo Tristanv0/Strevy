@@ -14,8 +14,19 @@
 		}
 	],
 	"vars": {
-		"ALLOWED_ORIGINS": "https://tristancheng.com,https://www.tristancheng.com"
+		"ALLOWED_ORIGINS": "https://tristancheng.com,https://www.tristancheng.com",
+		"HEVY_TIMEZONE": "America/Toronto"
 	},
+	"browser": { "binding": "HEVY_BROWSER" },
+	"workflows": [
+		{
+			"binding": "HEVY_REFRESH",
+			"name": "strevy-hevy-refresh",
+			"class_name": "HevyRefreshWorkflow",
+			"concurrency": { "limit": 1 }
+		}
+	],
+	"triggers": { "crons": ["59 3,4 * * *"] },
 	"r2_buckets": [
 		{
 			"binding": "STREVY_DATA",

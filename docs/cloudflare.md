@@ -6,8 +6,8 @@ Strava and Hevy output in separate prefixes. The Worker serves `/api/runs`,
 
 This setup uses Cloudflare's [Express integration](https://developers.cloudflare.com/workers/tutorials/deploy-an-express-app/)
 and [R2 Worker bindings](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/).
-The Puppeteer scraper continues running on your computer. It is not bundled into
-the Worker or scheduled by this configuration.
+The Strava scraper runs on your computer. The Hevy scraper also runs in a separate
+Cloudflare Workflow on the nightly schedule described below.
 
 ## 1. Test the Worker locally
 
@@ -206,4 +206,110 @@ npm run upload:r2 -- --remote --source strava
 
 The deployed API reads R2 on every request, so it does not need redeployment when
 the data changes. Your existing uploaded data stays available when your computer
-is off. Scheduled scraping is a separate future step.
+is off. Hevy refreshes can run independently in Cloudflare as described below.
+
+## Nightly Hevy refresh
+
+Cloudflare Cron Triggers start `strevy-hevy-refresh` at **23:59 America/Toronto**.
+The Worker checks the cron event's scheduled timestamp, rather than its delivery
+time. The UTC cron `59 3,4 * * *` fires twice, but only the event corresponding to
+23:59 in Toronto starts a workflow. This handles daylight-saving changes without
+running the scraper twice. This is Toronto local time, not fixed UTC−5 year-round.
+
+The workflow runs these steps in order:
+
+1. Launch Cloudflare Browser Run, log into Hevy, and run the existing own-profile
+   scraper. The latest five workouts retain full detail; additional workouts are
+   current-month title/date/time summaries. Exercise order and photo URLs use the
+   same exporter as the local command.
+2. Atomically replace `hevy/latest-workouts.json` through the R2 binding. There is
+   no bucket wipe or interval where the report is missing. Images stay remote
+   URLs in the JSON. Other keys, including the complete `strava/` prefix, are left
+   intact. Local output files are not updated by the cloud job.
+3. POST the frontend's Workers Builds deploy hook. Your Astro frontend reads the
+   API at build time, so a new build is needed to display the refreshed report.
+
+### Configure the secrets and deploy
+
+In the Cloudflare dashboard, select the **frontend** Worker for
+`Tristanv0.github.io`, then open **Settings → Builds → Deploy Hooks**. Create a hook
+for the production branch. Save its URL in the gitignored root `.env` alongside
+your existing Hevy credentials:
+
+```dotenv
+HEVY_EMAIL="your-email"
+HEVY_PASSWORD="your-password"
+FRONTEND_DEPLOY_HOOK_URL="https://api.cloudflare.com/client/v4/workers/builds/deploy_hooks/YOUR_HOOK_ID"
+```
+
+The hook must belong to the frontend, not `strevy-api`. Verify the frontend's
+production build variable `STREVY_API_ORIGIN` is `https://api.tristancheng.com`.
+The deploy hook URL is a secret and does not need a separate Authorization header.
+
+From the Strevy root:
+
+```sh
+npx wrangler login
+npm run secrets:hevy -- --dry-run
+npm run secrets:hevy
+npm run deploy
+```
+
+`secrets:hevy` validates the three values and pipes only those values into
+Wrangler's secret bulk command. It does not print them or upload the rest of
+`.env`. These are Worker secrets; putting them only in the local `.env` is not
+enough for a cloud run. No Cloudflare API token is needed by the running workflow:
+it uses its Browser Run, R2, and Workflows bindings. If Wrangler reports no access
+while using a browser-only `CLOUDFLARE_API_TOKEN`, remove that obsolete setting
+from `.env`/your shell and use `wrangler login`, or supply a token with deployment
+permissions for this Worker and workflow.
+
+`wrangler.jsonc` declares the browser binding, workflow binding, and cron. A
+deployment applies the schedule; Cloudflare can take up to 15 minutes to propagate
+cron changes. The browser and workflow use your Cloudflare account's allowances
+and plan limits. Your computer can be off when the scheduled cloud run starts.
+
+### Run and inspect a refresh
+
+After deployment, start one complete cloud run immediately:
+
+```sh
+npm run refresh:hevy
+```
+
+The command prints an instance ID. Inspect it with:
+
+```sh
+npx wrangler workflows instances describe strevy-hevy-refresh INSTANCE_ID --no-step-output
+```
+
+Or open **Workflows → strevy-hevy-refresh → Instances** in Cloudflare. The steps
+are `scrape-hevy`, `publish-hevy-to-r2`, and `rebuild-frontend`. After upload,
+`https://api.tristancheng.com/api/workouts` should show the new `scrapedAt`.
+Inspect the frontend Worker's build history to confirm its deployment succeeds.
+A completed workflow means the build hook accepted the request; the build itself
+finishes asynchronously and can still fail independently.
+
+The login/scrape step is attempted once. Scrape failures preserve the old report
+and do not start a build. R2 and hook failures each receive up to three retries;
+completed steps are checkpointed so those retries do not repeat the login.
+A later manual workflow restart is a new execution and may log in again. Workflow
+concurrency is one, repeated nightly events reuse the date's instance ID, and a
+stale report cannot overwrite a newer snapshot. A hook timeout can mean the
+request was accepted without its response arriving, so a retry can queue an
+additional frontend build.
+
+There is no public HTTP endpoint that starts scraping. Manual runs use your
+authenticated Wrangler session. Strava has no Cloudflare login or cron path.
+
+Local development does not fire cron automatically. `npm run test:automation`
+checks the full year of Toronto schedule boundaries, pipeline ordering, R2
+failure handling, checkpoint reuse, and secret-safe hook errors without logging
+in or changing cloud data. `npm run dev:worker` continues serving local R2 data;
+starting a local workflow requires local Hevy/hook secrets and can contact the
+real websites. Use the deployed workflow for an intentional live end-to-end test.
+
+References: [Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/),
+[Workflows](https://developers.cloudflare.com/workflows/build/trigger-workflows/),
+[Browser Run](https://developers.cloudflare.com/browser-run/puppeteer/),
+and [Workers Builds deploy hooks](https://developers.cloudflare.com/workers/ci-cd/builds/deploy-hooks/).
