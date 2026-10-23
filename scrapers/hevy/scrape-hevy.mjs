@@ -36,10 +36,11 @@ try {
   await rename(temporary, output);
   console.table(result.workouts.map(workout => ({
     Date: workout.date, Time: workout.time ?? '', Workout: workout.title ?? '',
-    Detail: workout.detailLevel === 'full' ? 'Full' : 'Date/time only',
+    Detail: workout.detailLevel === 'full' ? 'Full' : 'Title/date/time',
     Duration: workout.duration?.display ?? '', Sets: workout.setCount ?? '',
     Volume: workout.volume?.display ?? '',
     Records: workout.recordCount ?? '', 'Avg BPM': workout.averageHeartRateBpm ?? '',
+    Photos: workout.photos?.length ?? '',
   })));
   console.log(`Saved ${result.count} workouts (${result.detailedCount} full, ${result.summaryCount} summaries) to ${fileURLToPath(output)}`);
 } catch (error) {

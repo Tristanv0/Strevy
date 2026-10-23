@@ -72,6 +72,23 @@ function weight(kg, unit) {
   return { value: kg === null ? null : rounded(unit === 'lb' ? kg * 2.2046226218487757 : kg), unit };
 }
 
+function workoutPhotos(workout) {
+  const photos = new Map();
+  const urls = [
+    ...array(workout.media).filter(media => media?.type === 'image').map(media => media.url),
+    ...array(workout.image_urls),
+  ];
+  for (const value of urls) {
+    if (typeof value !== 'string') continue;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'https:' || url.username || url.password) continue;
+      photos.set(url.href, { url: url.href });
+    } catch { /* Ignore malformed image URLs without exporting raw media objects. */ }
+  }
+  return [...photos.values()];
+}
+
 export function fullWorkout(workout, { timeZone = 'America/Toronto', weightUnit = 'kg' } = {}) {
   if (!Array.isArray(workout.exercises)) throw new Error('Hevy did not return workout exercises.');
   const unit = /^lb(s)?$/i.test(weightUnit) ? 'lb' : 'kg';
@@ -83,28 +100,29 @@ export function fullWorkout(workout, { timeZone = 'America/Toronto', weightUnit 
   const volumeKg = finite(workout.estimated_volume_kg);
   const volume = weight(volumeKg, unit);
   const heartRate = finite(workout.biometrics?.average_heart_rate);
-  const exercises = [...workout.exercises].sort((a, b) => (finite(a.priority) ?? 0) - (finite(b.priority) ?? 0))
-    .map(exercise => {
-      if (!Array.isArray(exercise.sets)) throw new Error('Hevy did not return exercise sets.');
-      return {
-        id: String(exercise.id), exerciseTemplateId: exercise.exercise_template_id ?? null,
-        title: exercise.title, type: exercise.exercise_type ?? null,
-        equipment: exercise.equipment_category ?? null, primaryMuscle: exercise.muscle_group ?? null,
-        otherMuscles: array(exercise.other_muscles), notes: exercise.notes ?? null,
-        supersetId: exercise.superset_id ?? null, restSeconds: finite(exercise.rest_seconds),
-        volumeDoublingEnabled: exercise.volume_doubling_enabled === true,
-        sets: [...exercise.sets].sort((a, b) => (finite(a.index) ?? 0) - (finite(b.index) ?? 0))
-          .map((set, index) => ({
-            index: index + 1, type: set.indicator ?? 'normal',
-            reps: finite(set.reps), weightKg: finite(set.weight_kg),
-            weight: weight(finite(set.weight_kg), unit),
-            durationSeconds: finite(set.duration_seconds), distanceMeters: finite(set.distance_meters),
-            rpe: finite(set.rpe), customMetric: finite(set.custom_metric),
-            personalRecords: records([...array(set.prs), ...array(set.personalRecords)]),
-            yearlyRecords: records(array(set.yearly_prs)),
-          })),
-      };
-    });
+  // Preserve the workout's exercise sequence; priority is not a unique position.
+  const exercises = workout.exercises.map((exercise, index) => {
+    if (!Array.isArray(exercise.sets)) throw new Error('Hevy did not return exercise sets.');
+    return {
+      order: index + 1,
+      id: String(exercise.id), exerciseTemplateId: exercise.exercise_template_id ?? null,
+      title: exercise.title, type: exercise.exercise_type ?? null,
+      equipment: exercise.equipment_category ?? null, primaryMuscle: exercise.muscle_group ?? null,
+      otherMuscles: array(exercise.other_muscles), notes: exercise.notes ?? null,
+      supersetId: exercise.superset_id ?? null, restSeconds: finite(exercise.rest_seconds),
+      volumeDoublingEnabled: exercise.volume_doubling_enabled === true,
+      sets: [...exercise.sets].sort((a, b) => (finite(a.index) ?? 0) - (finite(b.index) ?? 0))
+        .map((set, index) => ({
+          index: index + 1, type: set.indicator ?? 'normal',
+          reps: finite(set.reps), weightKg: finite(set.weight_kg),
+          weight: weight(finite(set.weight_kg), unit),
+          durationSeconds: finite(set.duration_seconds), distanceMeters: finite(set.distance_meters),
+          rpe: finite(set.rpe), customMetric: finite(set.custom_metric),
+          personalRecords: records([...array(set.prs), ...array(set.personalRecords)]),
+          yearlyRecords: records(array(set.yearly_prs)),
+        })),
+    };
+  });
   const aggregate = field => exercises.flatMap(exercise => exercise.sets.flatMap(set => set[field]
     .map(record => ({ exercise: exercise.title, exerciseId: exercise.id, setIndex: set.index, ...record }))));
   const personalRecords = aggregate('personalRecords');
@@ -113,6 +131,7 @@ export function fullWorkout(workout, { timeZone = 'America/Toronto', weightUnit 
     id: String(workout.id), detailLevel: 'full', title: workout.name,
     date: workoutDate(workout, timeZone),
     url: `https://hevy.com/workout/${encodeURIComponent(workout.short_id || workout.id)}`,
+    photos: workoutPhotos(workout),
     startTime: new Date(start).toISOString(), endTime: end === null ? null : new Date(end).toISOString(),
     duration: { seconds, display: minutes === null ? null : `${Math.floor(minutes / 60)}h ${minutes % 60}m` },
     volumeKg, volume: { ...volume,

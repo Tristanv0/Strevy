@@ -18,7 +18,7 @@ Available endpoints:
 - `GET /health` returns `{ "status": "ok" }`. This checks that the API is responding, not whether a scrape succeeded.
 - `GET /api/runs` returns the latest saved `latest-runs.json` snapshot, with a `url` added to each stored image entry. It reads the snapshot from local disk or R2 on every request, so updated data is available without restarting the server. It returns HTTP 503 if no snapshot exists yet.
 - `GET /api/runs/media/<activity-id>/route.png` serves the transparent route-only image; `map.png` in the same folder serves the route with Strava's map background. Existing local photo files can also be served from this media folder. Missing files return a JSON 404 response; directory listings are disabled.
-- `GET /api/workouts` returns the complete saved Hevy report from `scrapers/hevy/output/latest-workouts.json` locally or `hevy/latest-workouts.json` in R2. It includes the latest five full workouts and current-month date/time summaries. The endpoint reads the file on every request, uses `Cache-Control: no-store`, and returns HTTP 503 when no snapshot exists yet.
+- `GET /api/workouts` returns the complete saved Hevy report from `scrapers/hevy/output/latest-workouts.json` locally or `hevy/latest-workouts.json` in R2. It includes the latest five full workouts and current-month title/date/time summaries. The endpoint reads the file on every request, uses `Cache-Control: no-store`, and returns HTTP 503 when no snapshot exists yet.
 - Unrecognized endpoints return a JSON 404 response.
 
 Optionally set `PORT` and `HOST` in the root `.env` or environment. For a deployment that needs to accept connections on all interfaces, set `HOST=0.0.0.0` and use the port provided by your host.
@@ -157,9 +157,20 @@ Results are saved to `scrapers/hevy/output/latest-workouts.json`, newest first:
   superset IDs, notes, start/end times, total duration, volume, personal and
   yearly records, and average BPM when available. Calories are included when
   recorded. Missing metrics stay `null`; no heart rate is guessed.
-- Remaining workouts **in the current calendar month** contain only `date`
+- Remaining workouts **in the current calendar month** contain `title`, `date`
   (`YYYY-MM-DD`) and `time` (`HH:mm:ss`, 24-hour local start time). Workouts
   already included in the latest five are not duplicated as summaries.
+
+Exercises retain their sequence from Hevy's workout response, with an explicit
+`order` field starting at 1. Exercise `priority` does not determine the exported
+sequence. Sets remain sorted by Hevy's set index and numbered from 1.
+
+Each full workout includes `photos: [{ "url": "https://..." }]` for images
+attached to that workout, or `photos: []` when none are available. The scraper
+reads Hevy's `media` images and `image_urls`, removes duplicate URLs, and excludes
+profile pictures and videos. Images remain remote URLs; they are not downloaded
+to disk or R2. These URLs are included in `/api/workouts` after uploading the
+updated JSON and may change or expire. Summary workouts have no `photos` field.
 
 For example, on October 2 the full workouts can extend into September, with
 extra summaries only for October 1–2. With one workout each day October 1–7,
