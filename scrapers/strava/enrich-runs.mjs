@@ -5,6 +5,16 @@ import { collectMapImages } from './map-view.mjs';
 const number = value => value === null || value === undefined || value === ''
   ? null : Number.isFinite(Number(value)) ? Number(value) : null;
 
+export function parseRunCalories(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value !== 'string') return null;
+  // Strava's English display can include grouping separators and a Cal/kcal label.
+  const match = value.trim().match(/^(\d+(?:[,\s]\d{3})*(?:\.\d+)?)\s*(?:kcal|cal(?:ories)?)?$/i);
+  if (!match) return null;
+  const calories = Number(match[1].replace(/[,\s]/g, ''));
+  return Number.isFinite(calories) ? calories : null;
+}
+
 export function applyRunDetails(run, detail) {
   const distanceMeters = number(detail.distanceMeters);
   const movingSeconds = number(detail.movingTimeSeconds) ?? run.movingTime.seconds;
@@ -24,6 +34,7 @@ export function applyRunDetails(run, detail) {
     ...run,
     distanceMeters: meters,
     averageHeartRateBpm: heartRate > 0 ? Number(heartRate.toFixed(2)) : null,
+    calories: parseRunCalories(detail.calories) ?? parseRunCalories(detail.caloriesDisplay),
     averagePacePerKm: secondsPerKm === null ? null : {
       display: `${Math.floor(secondsPerKm / 60)}:${String(secondsPerKm % 60).padStart(2, '0')} /km`,
       secondsPerKm,
@@ -64,11 +75,17 @@ async function readRunDetails(page, run, athleteId) {
         try { return JSON.parse(element.getAttribute('data-react-props')).items || []; }
         catch { return []; }
       });
+    const caloriesStat = document.querySelector('.inline-stats .calories')
+      ?? [...document.querySelectorAll('.inline-stats li')].find(element =>
+        [...element.querySelectorAll('.label, .unit')].some(label =>
+          /^calories(?:\s+burned)?$/i.test(label.textContent.trim())));
     return {
       id: String(raw.id), athleteId: String(raw.activityAthleteId), isOwner: view._isOwner === true,
       type: raw.type, distanceMeters: raw.distance, movingTimeSeconds: raw.moving_time,
       averageSpeedMps: raw.avg_speed, averageHeartRateBpm: raw.avg_hr,
       elevationGainMeters: raw.elev_gain,
+      calories: raw.calories,
+      caloriesDisplay: caloriesStat?.querySelector('strong')?.textContent.trim() || null,
       relativeEffort: document.querySelector('.inline-stats .suffer-score strong')?.textContent.trim() || null,
       photos: items.map(item => ({
         photo_id: item.photo_id, id: item.id, media_type: item.media_type,

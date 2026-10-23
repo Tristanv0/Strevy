@@ -255,6 +255,7 @@ try {
     'Moving time': run.movingTime.display,
     'Pace /km': run.averagePacePerKm?.display || 'Unavailable',
     'Avg HR': run.averageHeartRateBpm ?? 'Unavailable',
+    'Calories (kcal)': run.calories ?? 'Unavailable',
     Effort: run.relativeEffort ?? 'Unavailable',
     'Elevation (m)': run.elevationGainMeters ?? 'Unavailable',
     Photos: run.photos.length,

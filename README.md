@@ -130,6 +130,7 @@ The script logs in automatically and reads **My Activities**, which is scoped to
 Results are saved to `scrapers/strava/output/latest-runs.json` and summarized in the terminal. Each run contains its ID, title, sport, start time, distance and units, moving and elapsed time, elevation gain, relative effort, description, and Strava URL. The scraper then opens each of those five run pages, verifies that it belongs to the signed-in athlete, and adds:
 
 - `averageHeartRateBpm`, when recorded and available.
+- `calories`, in kcal, read from the activity's data or displayed calorie statistic. Missing or invalid values are `null`; calories are not calculated by the scraper.
 - `averagePacePerKm`, calculated from Strava's precise average speed or distance and moving time. The original `averagePace` field retains the activity-history display units and rounding.
 - `distanceMeters` and `elevationGainMeters`, using precise activity values when available.
 - `photos`, containing `{ "id": "...", "url": "https://..." }` entries for the athlete's own uploaded photos attached to that run. The scraper stores the original image URLs without downloading or re-encoding photos. These remote URLs may change or expire; the linked images retain any original metadata.
