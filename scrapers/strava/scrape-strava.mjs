@@ -38,10 +38,10 @@ const browser = await puppeteer.launch({
 class LoginRejectedError extends Error {}
 
 // Strava renders separate desktop/mobile forms; use the visible control.
-async function visibleElement(page, selector, text, acceptPasswordInput = false) {
+async function visibleElement(page, selector, text, acceptPasswordInput = false, timeout = 0) {
   const handle = await page.waitForFunction(
     findVisibleLoginControl,
-    { timeout: 0 },
+    { timeout },
     selector,
     text,
     acceptPasswordInput,
@@ -114,6 +114,13 @@ async function typeAndPause(page, element, value) {
   await pause(250, 450);
 }
 
+async function passwordFieldVisible(page) {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll('input[type="password"]')).some(
+      (element) => element.getClientRects().length > 0,
+    ));
+}
+
 async function waitForSignedIn(page) {
   const result = await page.waitForFunction(() => {
     if (location.hostname === 'www.strava.com'
@@ -178,25 +185,53 @@ try {
     const emailInput = await visibleElement(page, 'input[name="email"], input[type="email"]');
     await typeAndPause(page, emailInput, email);
 
-    const passwordVisible = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('input[type="password"]')).some(
-        (element) => element.getClientRects().length > 0,
-      ),
-    );
+    let passwordVisible = await passwordFieldVisible(page);
     if (!passwordVisible) {
-      // Submit the email, then switch from the code flow to password login.
-      stage = 'submitting the email';
-      await clickAndPause(page, await visibleElement(page, submitSelector));
       stage = 'opening password login';
-      const passwordStep = await visibleElement(
-        page, 'button, a, [role="button"]', 'Use password instead', true,
-      );
-      const passwordAlreadyOpen = await passwordStep.evaluate(element => element.matches('input[type="password"]'));
-      if (!passwordAlreadyOpen) {
-        console.log('Clicking Use password instead.');
-        await clickAndPause(page, passwordStep);
+      let passwordStep = null;
+      for (const label of ['Use password instead', 'Use password']) {
+        try {
+          passwordStep = await visibleElement(
+            page,
+            'button, a, [role="button"]',
+            label,
+            true,
+            2_500,
+          );
+          break;
+        } catch (error) {
+          if (error.name !== 'TimeoutError') throw error;
+        }
       }
-      await passwordStep.dispose();
+      if (passwordStep) {
+        const passwordAlreadyOpen = await passwordStep.evaluate(
+          element => element.matches('input[type="password"]'),
+        );
+        if (!passwordAlreadyOpen) {
+          console.log('Clicking Use password instead.');
+          await clickAndPause(page, passwordStep);
+        }
+        await passwordStep.dispose();
+        await pause(250, 450);
+        passwordVisible = await passwordFieldVisible(page);
+      }
+      if (!passwordVisible) {
+        // Fall back to Strava's code-first flow when no password switch control is available.
+        stage = 'submitting the email';
+        await clickAndPause(page, await visibleElement(page, submitSelector));
+        stage = 'opening password login';
+        const fallbackPasswordStep = await visibleElement(
+          page, 'button, a, [role="button"]', 'Use password instead', true,
+        );
+        const passwordAlreadyOpen = await fallbackPasswordStep.evaluate(
+          element => element.matches('input[type="password"]'),
+        );
+        if (!passwordAlreadyOpen) {
+          console.log('Clicking Use password instead.');
+          await clickAndPause(page, fallbackPasswordStep);
+        }
+        await fallbackPasswordStep.dispose();
+      }
     }
 
     stage = 'entering the password';
