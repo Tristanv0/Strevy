@@ -8,3 +8,4 @@ dist/
 browser-profile/
 scrapers/strava/output/
 scrapers/hevy/output/
+imports/apple-health/output/

@@ -1,7 +1,21 @@
 import { readFile } from 'node:fs/promises';
 import { isMediaKey } from '../lib/media.js';
+import { BADMINTON_FILENAME } from '../lib/badminton.js';
 
 const defaultDirectory = new URL('../../scrapers/strava/output/', import.meta.url);
+
+export function createLocalBadmintonStore(outputDirectory = new URL('../../imports/apple-health/output/', import.meta.url)) {
+  return {
+    async readSnapshot() {
+      try {
+        return JSON.parse(await readFile(new URL(BADMINTON_FILENAME, outputDirectory), 'utf8'));
+      } catch (error) {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      }
+    },
+  };
+}
 
 export function createLocalWorkoutsStore(outputDirectory = new URL('../../scrapers/hevy/output/', import.meta.url)) {
   return {

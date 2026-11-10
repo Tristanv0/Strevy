@@ -3,8 +3,10 @@ import cors from 'cors';
 import healthRouter from './routes/health.js';
 import createRunsRouter from './routes/runs.js';
 import createWorkoutsRouter from './routes/workouts.js';
+import createBadmintonRouter from './routes/badminton.js';
+import createAppleHealthRouter from './routes/apple-health.js';
 
-export default function createApp({ runsStore, workoutsStore, allowedOrigins = '' }) {
+export default function createApp({ runsStore, workoutsStore, badmintonStore, appleHealthSyncToken, allowedOrigins = '' }) {
   const app = express();
 
   app.disable('x-powered-by');
@@ -12,6 +14,8 @@ export default function createApp({ runsStore, workoutsStore, allowedOrigins = '
     origin: allowedOrigins.split(',').map(origin => origin.trim()).filter(Boolean),
     methods: ['GET', 'HEAD', 'OPTIONS'],
   }));
+  // Authenticate these requests before reading their larger, workout-only JSON bodies.
+  app.use('/api/apple-health', createAppleHealthRouter(badmintonStore, appleHealthSyncToken));
   app.use(express.json());
 
   app.get('/', (req, res) => {
@@ -20,6 +24,7 @@ export default function createApp({ runsStore, workoutsStore, allowedOrigins = '
   app.use('/health', healthRouter);
   app.use('/api/runs', createRunsRouter(runsStore));
   app.use('/api/workouts', createWorkoutsRouter(workoutsStore));
+  app.use('/api/badminton', createBadmintonRouter(badmintonStore));
 
   app.use((req, res) => {
     res.status(404).json({ error: 'Endpoint not found' });

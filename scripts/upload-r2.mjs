@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { isMediaKey } from '../src/lib/media.js';
+import { BADMINTON_FILENAME, BADMINTON_R2_KEY, retainBadmintonDays } from '../src/lib/badminton.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const defaultOutput = join(root, 'scrapers/strava/output');
@@ -87,8 +88,19 @@ export async function buildDirectoryUploadPlan(outputDirectory = defaultOutput, 
 }
 
 export async function buildSourceUploadPlan({ source = 'strava', directory } = {}) {
-  if (!['strava', 'hevy', 'all'].includes(source)) throw new Error('Choose --source strava, hevy, or all.');
-  if (source === 'all' && directory) throw new Error('--directory requires a single --source (strava or hevy).');
+  if (source === 'badminton') {
+    const folder = await realpath(directory ?? join(root, 'imports/apple-health/output'));
+    const path = await realpath(join(folder, BADMINTON_FILENAME));
+    if (!path.startsWith(folder + sep)) throw new Error('The snapshot must be inside the output directory.');
+    const snapshot = retainBadmintonDays(JSON.parse(await readFile(path, 'utf8')));
+    return { selected: [source], plan: [{
+      key: BADMINTON_R2_KEY,
+      body: Buffer.from(`${JSON.stringify(snapshot, null, 2)}\n`),
+      contentType: 'application/json',
+    }] };
+  }
+  if (!['strava', 'hevy', 'all'].includes(source)) throw new Error('Choose --source strava, hevy, badminton, or all.');
+  if (source === 'all' && directory) throw new Error('--directory requires a single --source (strava, hevy, or badminton).');
   const selected = source === 'all' ? ['strava', 'hevy'] : [source];
   const plan = [];
   for (const name of selected) {
@@ -178,8 +190,10 @@ async function main() {
   if (values.remote && values.local) throw new Error('Choose either --local or --remote.');
   if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(values.bucket)) throw new Error('Invalid R2 bucket name.');
   const { selected, plan } = await buildSourceUploadPlan({ source: values.source, directory: values.directory });
+  const badminton = values.source === 'badminton';
   console.log(`${values['dry-run'] ? 'Preview' : 'Uploading'}: ${plan.length} files to ${values.remote ? 'remote' : 'local'} R2 (${values.bucket}).`);
-  console.log(`REPLACE: only ${selected.map(source => `${source}/`).join(' and ')} will be cleared and replaced with the selected local output. Other objects are retained.`);
+  if (badminton) console.log(`REPLACE: only ${BADMINTON_R2_KEY} will be overwritten. No objects will be deleted.`);
+  else console.log(`REPLACE: only ${selected.map(source => `${source}/`).join(' and ')} will be cleared and replaced with the selected local output. Other objects are retained.`);
   if (values['dry-run']) {
     for (const item of plan) console.log(item.key);
     return;
@@ -190,7 +204,7 @@ async function main() {
     for (const [index, item] of plan.entries()) {
       await writeFile(join(staging, String(index)), item.body, { mode: 0o600 });
     }
-    await clearBucket(values.bucket, values.remote, staging, selected);
+    if (!badminton) await clearBucket(values.bucket, values.remote, staging, selected);
     for (const [index, item] of plan.entries()) {
       const file = join(staging, String(index));
       await runWrangler(['r2', 'object', 'put', `${values.bucket}/${item.key}`,

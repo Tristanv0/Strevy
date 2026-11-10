@@ -1,7 +1,7 @@
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import createApp from './app.js';
-import { createLocalRunsStore, createLocalWorkoutsStore } from './storage/local.js';
+import { createLocalBadmintonStore, createLocalRunsStore, createLocalWorkoutsStore } from './storage/local.js';
 
 try {
   loadEnvFile(fileURLToPath(new URL('../.env', import.meta.url)));
@@ -14,6 +14,7 @@ const host = process.env.HOST ?? '127.0.0.1';
 const app = createApp({
   runsStore: createLocalRunsStore(),
   workoutsStore: createLocalWorkoutsStore(),
+  badmintonStore: createLocalBadmintonStore(),
   allowedOrigins: process.env.ALLOWED_ORIGINS ?? 'http://localhost:3000,http://localhost:5173',
 });
 

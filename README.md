@@ -1,5 +1,5 @@
 # Strevy
-An API for bringing Strava runs and Hevy workouts together. The API exposes saved Strava runs and media, plus Hevy workouts.
+An API for saved Strava runs and media, Hevy workouts, and daily Shuttls badminton summaries.
 
 ## Express API
 
@@ -19,11 +19,12 @@ Available endpoints:
 - `GET /api/runs` returns the latest saved `latest-runs.json` snapshot, with a `url` added to each stored image entry. It reads the snapshot from local disk or R2 on every request, so updated data is available without restarting the server. It returns HTTP 503 if no snapshot exists yet.
 - `GET /api/runs/media/<activity-id>/route.png` serves the transparent route-only image; `map.png` in the same folder serves the route with Strava's map background. Existing local photo files can also be served from this media folder. Missing files return a JSON 404 response; directory listings are disabled.
 - `GET /api/workouts` returns the complete saved Hevy report from `scrapers/hevy/output/latest-workouts.json` locally or `hevy/latest-workouts.json` in R2. It includes the latest five full workouts and current-month title/date/time summaries. The endpoint reads the file on every request, uses `Cache-Control: no-store`, and returns HTTP 503 when no snapshot exists yet.
+- `GET /api/badminton` returns daily Shuttls summaries for the last six calendar months. It returns HTTP 503 until a summary is saved.
 - Unrecognized endpoints return a JSON 404 response.
 
 Optionally set `PORT` and `HOST` in the root `.env` or environment. For a deployment that needs to accept connections on all interfaces, set `HOST=0.0.0.0` and use the port provided by your host.
 
-The runs and workouts endpoints return their saved reports without authentication. Browser access is controlled by the comma-separated `ALLOWED_ORIGINS` setting; the local Node server defaults to localhost ports 3000 and 5173. API requests read saved data. A separate Cloudflare workflow refreshes Hevy on the nightly schedule below.
+The data endpoints return their saved reports without authentication. Browser access is controlled by the comma-separated `ALLOWED_ORIGINS` setting; the local Node server defaults to localhost ports 3000 and 5173. API requests read saved data. A separate Cloudflare workflow refreshes Hevy on the nightly schedule below.
 
 Local image URLs in the response are relative to the API origin, for example `/api/runs/media/123/route.png`. Uploaded photo URLs remain unchanged. A website on another origin should resolve a local image URL against the API origin:
 
@@ -75,14 +76,14 @@ npm run deploy                # Publish the Worker and custom domain
 
 The private `strevy-data` bucket stores JSON and images. The Worker uses its R2
 binding without needing Strava credentials. The scraper runs separately from the
-Worker, locally or in the manual GitHub Actions test described below. Both local
-and remote uploads validate and stage the selected output directories before
-deleting objects. Each upload replaces only the selected `strava/` or `hevy/`
+Worker, locally or in the manual GitHub Actions test described below. Strava and
+Hevy uploads validate and stage the selected output directories before
+deleting objects. Each of those uploads replaces only the selected `strava/` or `hevy/`
 prefix in R2, then publishes JSON after all files. The default source is `strava`;
 `--replace` is still accepted but is no longer needed. Use `--dry-run` to preview
 without contacting R2. Run one upload at a time; replacement is not atomic.
 
-The Worker reads Strava objects under `strava/` and Hevy JSON under `hevy/`; API image URLs stay the same.
+The Worker reads Strava objects under `strava/`, Hevy JSON under `hevy/`, and daily badminton JSON under `badminton/`.
 For an existing deployment, upload Strava with the new script and redeploy the
 Worker to switch storage paths. Legacy objects at the bucket root are retained
 and can be removed separately after checking the updated API.
@@ -111,6 +112,50 @@ package.json         Shared dependencies and commands
 ```
 
 The repository contains only a backend, so there is no additional `backend/` wrapper. The scraper's existing output was moved with its code; relative image paths inside the JSON still work.
+
+## Badminton daily summaries
+
+Keep the filtered Apple Health match export at `imports/apple-health/output/badminton-workouts.json` locally. From the repository root:
+
+```sh
+npm run summarize:badminton
+npm run upload:r2 -- --remote --source badminton --dry-run
+```
+
+The first command writes `badminton-daily.json` alongside the match export. It
+groups Shuttls workouts by the Toronto date of their start time, excludes all
+other sources, and returns newest dates first. Each day has `date`,
+`durationSeconds`, `activeEnergyKcal`, `averageHeartRateBpm`,
+`walkingRunningDistanceKm`, and `rallyCount` (one per Shuttls workout). Heart rate
+is the simple mean of the available match averages. Calories and distance sum
+available values; metrics with no data that day are `null`.
+
+The top-level `lifetimeActiveEnergyKcal` and `lifetimeDurationSeconds` sum the
+recorded active calories and match durations from all imported Shuttls workouts
+before trimming the daily rows. Duration excludes gaps between matches. Uploads
+and nightly cleanup preserve both totals. Older snapshots without these fields
+return `null` until regenerated, and calories are `null` if none were recorded.
+
+The preview lists only `badminton/daily.json`. Remove `--dry-run` to replace that
+one R2 object. The match export remains local and both files are excluded from
+Git. `--source all` still uploads Strava and Hevy. After deploying the Worker,
+your site can fetch `https://api.tristancheng.com/api/badminton` and use its `days`
+array. The deployed endpoint is public, so publish only summaries you want on
+your website.
+
+The six-month window starts on the corresponding Toronto calendar date six
+months ago (or the last day of that month). Generation, upload, and API reads
+apply the window; the existing nightly trigger also removes expired dates from
+the stored R2 object, even on nights with no new data. For manual uploads,
+refresh the local match export with the full available history before rebuilding.
+
+## Sync Shuttls from your iPhone
+
+The [Apple Health sync setup](docs/apple-health-sync.md) explains how to configure
+Health Data Export, import the historical baseline once, and enable authenticated
+uploads to `/api/apple-health/sync`. After initialization, `/api/badminton` reads
+the synced state. The manual `--source badminton` command only replaces the legacy
+daily snapshot and is no longer needed for phone sync.
 
 ## Strava run scraper
 

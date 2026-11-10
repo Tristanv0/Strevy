@@ -15,6 +15,9 @@
     "upload:r2": "node scripts/upload-r2.mjs",
     "scrape:strava": "node scrapers/strava/scrape-strava.mjs",
     "scrape:hevy": "node scrapers/hevy/scrape-hevy.mjs",
+    "summarize:badminton": "node scripts/summarize-badminton.mjs",
+    "seed:badminton": "node scripts/seed-badminton-sync.mjs",
+    "test:badminton": "node --test src/lib/badminton*.test.js",
     "secrets:hevy": "node scripts/configure-hevy-secrets.mjs",
     "refresh:hevy": "wrangler workflows trigger strevy-hevy-refresh",
     "test:automation": "node --test src/automation/hevy-refresh.test.js"
