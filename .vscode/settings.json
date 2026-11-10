@@ -1,6 +1,7 @@
 {
     "conventionalCommits.scopes": [
         "strava scraper",
-        "hevy scraper"
+        "hevy scraper",
+        "badminton data processing"
     ]
 }
